@@ -120,7 +120,7 @@ $ClientSecret = "xxxxxxxxxxxxxxxxxx"
 $SubscriptionId = "xxxxxxxxxxxxxxxxxx"
 
 #EDIT - Log Analytics workspace id
-$workspaceId = "5ccfd947-42f9-4b91-b698-519e7d9ca180"
+$workspaceId = "xxxxxxxxxxxxxxxxxx"
 #----------------------------------------------------------------
 #----------------------------------------------------------------
 #----------------------------------------------------------------
