@@ -1,95 +1,4 @@
-﻿function IsCounterThrottled{
-    param ($VM, $Counter, $Disk, $DiskType)
-
-    $returnThrottleObject = $null
-    $debugString = $null 
-
-    if ($Disk -ne $null) 
-    {
-        if($Counter.CounterName -eq "Disk Transfers/sec" -and [double]$Counter.max -ge $Disk.DiskIOPSReadWrite)
-        {
-            $returnThrottleObject = [PSCustomObject]@{
-                VMName = $VM.Name
-                Counter = $Counter.CounterName
-                CounterValue = $Counter.max
-                CounterSimpleName = "IOPS"
-                CounterInstance = $Counter.InstanceName
-                CounterTimeGenerated = $Counter.TimeGenerated
-                Disk = $Disk.Name
-                ResourceLimit = $Disk.DiskIOPSReadWrite
-                ThrottleType = $DiskType
-
-            }
-            $debugString = "Disk Throttled" + "," + $VM.Name + "," + "Disk Transfer/sec" + "," + $Counter.TimeGenerated + "," + $Disk.Name + "," + $Disk.DiskIOPSReadWrite + "," + $Counter.max
-            Write-Host $debugString
-
-        }
-
-        if($Counter.CounterName -eq "Disk Bytes/sec" -and (([double]$Counter.max)/1024/1024) -ge $Disk.DiskMBpsReadWrite)
-        {
-            $returnThrottleObject = [PSCustomObject]@{
-                VMName = $VM.Name
-                Counter = $Counter.CounterName
-                CounterValue = $Counter.max
-                CounterSimpleName = "Disk MB/sec"
-                CounterInstance = $Counter.InstanceName
-                CounterTimeGenerated = $Counter.TimeGenerated
-                Disk = $Disk.Name
-                ResourceLimit = $Disk.DiskMBpsReadWrite
-                ThrottleType = $DiskType
-                }
-            $debugString = "Disk Throttled" + "," + $VM.Name + "," + "Disk MBytes/sec" + "," + $Counter.TimeGenerated + "," + $Disk.Name + "," + $disk.DiskMBpsReadWrite + "," + ([double]$Counter.max)/1024/1024
-            Write-Host $debugString
-        }        
-
-    }
-    else
-    {
-        #CounterInstance = _Total
-        if($Counter.CounterName -eq "Disk Transfers/sec" -and [double]$Counter.max -ge $VM.VMIops)
-        {
-
-            $returnThrottleObject = [PSCustomObject]@{
-                VMName = $VM.Name
-                Counter = $Counter.CounterName
-                CounterValue = $Counter.max
-                CounterSimpleName = "IOPS"
-                CounterInstance = $Counter.InstanceName
-                CounterTimeGenerated = $Counter.TimeGenerated
-                Disk = ""
-                ResourceLimit = ""
-                ThrottleType = "VM"
-                }
-
-            $debugString = "VM Throttled" + "," + $VM.Name + "," + "VM - Disk Transfer/sec" + "," + $Counter.TimeGenerated + "," + $Disk.Name + "," + $Disk.DiskIOPSReadWrite + "," + $Counter.max
-            Write-Host $debugString
-        }
-
-        if($Counter.CounterName -eq "Disk Bytes/sec" -and [double]$Counter.max -ge $VM.VMDiskBytes)
-        {
-            $returnThrottleObject = [PSCustomObject]@{
-                VMName = $VM.Name
-                Counter = $Counter.CounterName
-                CounterValue = $Counter.max
-                CounterSimpleName = "Disk MB/sec"
-                CounterInstance = $Counter.InstanceName
-                CounterTimeGenerated = $Counter.TimeGenerated
-                Disk = ""
-                ResourceLimit = ""
-                ThrottleType = "VM"
-                }
-
-            $debugString = "VM Throttled" + "," + $VM.Name + "," + "VM - Disk MBytes/sec" + "," + $Counter.TimeGenerated + "," + $Disk.Name + "," + ([double]$VM.VMDiskBytes)/1024/1024 + "," + ([double]$Counter.max)/1024/1024
-            Write-Host $debugString
-        }    
-    }
-
-    Return $returnThrottleObject
-
-}
-
-
-#----------------------------------------------------------------
+﻿#----------------------------------------------------------------
 #----------------------------------------------------------------
 #EDIT VARIABLES BELOW TO CHANGE QUERY PARAMETERS
 #----------------------------------------------------------------
@@ -103,7 +12,8 @@ Write-Host "###timeIntervalWindow = ", $timeIntervalWindow
 
 #EDIT TO SET HISTORY - Changes the query to pull records for the defined window relative to current time
 #Example $historyWindow = "3d" - Query pull counters from (now() - 3 days) to now()
-#$historyWindow = "-3d"
+# $historyWindow = "-3d"
+$historyWindow = $null
 Write-Host "###historyWindow = ", $historyWindow
 
 
@@ -127,6 +37,107 @@ $workspaceId = "xxxxxxxxxxxxxxxxxx"
 
 
 
+
+# Variables
+$VMSKUCache = [System.Collections.ArrayList]@()
+$ThrottleResults = [System.Collections.ArrayList]@()
+
+
+
+
+function IsCounterThrottled{
+    param ($VM, $Counter, $Disk, $DiskType)
+
+    $returnThrottleObject = $null
+    $debugString = $null 
+
+    if ($Disk -ne $null) 
+    {
+        if($Counter.CounterName -eq "Disk Transfers/sec" -and [double]$Counter.max -ge $Disk.DiskIOPSReadWrite)
+        {
+            $returnThrottleObject = [PSCustomObject]@{
+                VMName = $VM.Name
+                Counter = $Counter.CounterName
+                CounterValue = $Counter.max
+                CounterSimpleName = "IOPS"
+                CounterInstance = $Counter.InstanceName
+                CounterTimeGenerated = $Counter.TimeGenerated
+                Disk = $Disk.Name
+                ResourceLimit = $Disk.DiskIOPSReadWrite
+                ThrottleType = $DiskType
+
+            }
+            $debugString = "Disk Throttled" + "," + $VM.Name + "," + "Disk Transfer/sec" + "," + $Counter.TimeGenerated + "," + $Disk.Name + "," + $Disk.DiskIOPSReadWrite + "," + $Counter.max | Out-Null
+            Write-Host $debugString
+
+        }
+
+        if($Counter.CounterName -eq "Disk Bytes/sec" -and (([double]$Counter.max)/1024/1024) -ge $Disk.DiskMBpsReadWrite)
+        {
+            $returnThrottleObject = [PSCustomObject]@{
+                VMName = $VM.Name
+                Counter = $Counter.CounterName
+                CounterValue = $Counter.max
+                CounterSimpleName = "Disk MB/sec"
+                CounterInstance = $Counter.InstanceName
+                CounterTimeGenerated = $Counter.TimeGenerated
+                Disk = $Disk.Name
+                ResourceLimit = $Disk.DiskMBpsReadWrite
+                ThrottleType = $DiskType
+                }
+            $debugString = "Disk Throttled" + "," + $VM.Name + "," + "Disk MBytes/sec" + "," + $Counter.TimeGenerated + "," + $Disk.Name + "," + $disk.DiskMBpsReadWrite + "," + ([double]$Counter.max)/1024/1024 | Out-Null
+            Write-Host $debugString
+        }        
+
+    }
+    else
+    {
+        #CounterInstance = _Total
+        if($Counter.CounterName -eq "Disk Transfers/sec" -and [double]$Counter.max -ge $VM.VMIops)
+        {
+
+            $returnThrottleObject = [PSCustomObject]@{
+                VMName = $VM.Name
+                Counter = $Counter.CounterName
+                CounterValue = $Counter.max
+                CounterSimpleName = "IOPS"
+                CounterInstance = $Counter.InstanceName
+                CounterTimeGenerated = $Counter.TimeGenerated
+                Disk = ""
+                ResourceLimit = ""
+                ThrottleType = "VM"
+                }
+
+            $debugString = "VM Throttled" + "," + $VM.Name + "," + "VM - Disk Transfer/sec" + "," + $Counter.TimeGenerated + "," + $Disk.Name + "," + $Disk.DiskIOPSReadWrite + "," + $Counter.max | Out-Null
+            Write-Host $debugString
+        }
+
+        if($Counter.CounterName -eq "Disk Bytes/sec" -and [double]$Counter.max -ge $VM.VMDiskBytes)
+        {
+            $returnThrottleObject = [PSCustomObject]@{
+                VMName = $VM.Name
+                Counter = $Counter.CounterName
+                CounterValue = $Counter.max
+                CounterSimpleName = "Disk MB/sec"
+                CounterInstance = $Counter.InstanceName
+                CounterTimeGenerated = $Counter.TimeGenerated
+                Disk = ""
+                ResourceLimit = ""
+                ThrottleType = "VM"
+                }
+
+            $debugString = "VM Throttled" + "," + $VM.Name + "," + "VM - Disk MBytes/sec" + "," + $Counter.TimeGenerated + "," + $Disk.Name + "," + ([double]$VM.VMDiskBytes)/1024/1024 + "," + ([double]$Counter.max)/1024/1024 | Out-Null
+            Write-Host $debugString
+        }    
+    }
+
+    Return $returnThrottleObject
+
+}
+
+
+
+
 #Exit script if required variables not set.
 if ([string]::IsNullOrEmpty($TenantId) -or [string]::IsNullOrEmpty($ClientId) -or [string]::IsNullOrEmpty($ClientSecret) -or [string]::IsNullOrEmpty($SubscriptionId) -or [string]::IsNullOrEmpty($timeIntervalWindow))
 {
@@ -135,21 +146,14 @@ if ([string]::IsNullOrEmpty($TenantId) -or [string]::IsNullOrEmpty($ClientId) -o
 }
 
 
-# Variables
-$VMSKUCache = [System.Collections.ArrayList]@()
-$ThrottleResults = [System.Collections.ArrayList]@()
-
-
 
 $Resource = "https://management.core.windows.net/"
-
 $RequestAccessTokenUri = "https://login.microsoftonline.com/$TenantId/oauth2/token"
-
 $body = "grant_type=client_credentials&client_id=$ClientId&client_secret=$ClientSecret&resource=$Resource"
 
-Write-Host "### Authenticating to AZURE REST API for retrieving Azure SKUs"
+Write-Host "### Authenticating to AZURE REST API - Needed for retrieving Azure SKUs"
 $Token = Invoke-RestMethod -Method Post -Uri $RequestAccessTokenUri -Body $body -ContentType 'application/x-www-form-urlencoded'
-Write-Host "###   Authenticated to AZURE REST API for retrieving Azure SKUs"
+Write-Host "###   Authenticated to AZURE REST API - Needed for retrieving Azure SKUs"
 
 # Get Azure Microsoft.Compute SKUs
 $ApiUri = "https://management.azure.com/subscriptions/$SubscriptionId/providers/Microsoft.Compute/skus?api-version=2017-09-01"
@@ -201,6 +205,7 @@ $temp = $Counters.Results | measure
 Write-Host "###   Retrieved data from Log Analytics, Counter Records = ", $temp.Count
 
 
+
 Write-Host "### Getting list of VMs"
 if ($targetVM)
 {
@@ -212,6 +217,8 @@ else
 }
 Write-Host "###   Retrieved list of VMs, VM Count = ", $VirtualMachines.Count
 
+
+
 Write-Host "### Getting list of Managed Disks"
 $ManagedDisks = Get-AzDisk
 if ($targetVM)
@@ -222,19 +229,20 @@ if ($targetVM)
 Write-Host "###   Retrieved list of Managed Disks, Managed Disk Count = ", $ManagedDisks.Count
 
 
+
+
+
 Write-Host "### Checking for throttling"
 foreach($counter in $Counters.Results)
 {
 
 
     $vm = $VirtualMachines | Where-Object Id -EQ $counter._ResourceId
-    #VM level throttling
-    #$vm[0].HardwareProfile.VmSize
 
 
     if($counter.InstanceName -eq "_Total")
     {
-        #TODO - Compare counter to VM max IOPS
+        #Compare VM level stats, IOPS\throughput
 
         $VMsku = $VMSKUCache.Where({ $_.resourceType -eq "virtualMachines" -and $_.locations -eq $vm.Location -and $_.name -eq $vm.HardwareProfile.VmSize} )
         if ($VMsku[0] -eq $null)
@@ -256,11 +264,11 @@ foreach($counter in $Counters.Results)
         IsCounterThrottled -VM $vm -Counter $counter -Disk $null
 
 
-
-
     }
     else
     {
+        #Compare disk level stats, IOPS\throughput
+
         $splitDiskLun = $counter.InstanceName.Split(' ')
         $diskLun = [int]$splitDiskLun[0]
         if($diskLun -eq 0)
@@ -277,11 +285,12 @@ foreach($counter in $Counters.Results)
         }
         elseif ($diskLun -ge 2)
         {
-            #DataDisks
+            
+            #Data disks
             foreach ($dataDisk in $vm[0].StorageProfile.DataDisks)
             {
 
-                #Lun 0 - OS disk -OS disk always is on Lun 0
+                #Lun 0 - OS disk - OS disk always is on Lun 0
                 #Lun 1 - Temp disk
                 #Lun 2 - First data disk  
                 if ($dataDisk.Lun -eq ($diskLun - 2))
