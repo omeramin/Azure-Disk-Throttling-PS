@@ -1,325 +1,287 @@
-﻿#----------------------------------------------------------------
-#----------------------------------------------------------------
-#EDIT VARIABLES BELOW TO CHANGE QUERY PARAMETERS
-#----------------------------------------------------------------
-#----------------------------------------------------------------
-
-#EDIT TO SET INTERVAL - The lower the interval, the longer the script will take to run.
-#Example - 1d, 1h, 1m. The lowest is 10s. 
-$timeIntervalWindow = "1d"
-Write-Host "###timeIntervalWindow = ", $timeIntervalWindow
+﻿#-------------------------------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------------------------------
+# Replace variables below from your Azure subscription
 
 
-#EDIT TO SET HISTORY - Changes the query to pull records for the defined window relative to current time
-#Example $historyWindow = "3d" - Query pull counters from (now() - 3 days) to now()
-# $historyWindow = "-3d"
-$historyWindow = $null
-Write-Host "###historyWindow = ", $historyWindow
+# Replace with your Log Analytics Workspace ID
+$WorkspaceId = "xxxxxxx" 
+
+# Replace with your Primary Key from the Log Analytics Workspace pane
+$SharedKey = "xxxxxxx"
+
+# Specify the name of the Azure Custom Log
+$LogType = "DiskThrottleConfig"
+
+# Input values to retrieve VM SKUs\capabilities from AZURE REST API 
+# Use Instructions at https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal
+# Create an Azure AD App, assign the app a Reader role, create a new application secret. Then collect the values below.
+$TenantId = "xxxxxxx"
+$SubscriptionId = "xxxxxxx"
+$ClientId = "xxxxxxx"
+$ClientSecret = "xxxxxxx"
 
 
-#EDIT TO TARGET PARTICULAR VM - If scanning all VMs in subscription, then do not set variable in line below
-#Example - $targetVM = "VMname"
-$targetVM = $null
-Write-Host "###targetVM = ", $targetVM
+#-------------------------------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------------------------------
 
 
-#EDIT - Input values to retrieve VM SKUs\capabilities from AZURE REST API
-$TenantId = "xxxxxxxxxxxxxxxxxx"
-$ClientId = "xxxxxxxxxxxxxxxxxx"
-$ClientSecret = "xxxxxxxxxxxxxxxxxx"
-$SubscriptionId = "xxxxxxxxxxxxxxxxxx"
+# You can use an optional field to specify the timestamp from the data. If the time field is not specified, Azure Monitor assumes the time is the message ingestion time
+$TimeStampField = Get-date
+$TimeStampField = $TimeStampField.toUniversalTime()
+$TimeStampField = $TimeStampField.ToString("yyyy-MM-ddTHH:mm:ss.ffffZ")
 
-#EDIT - Log Analytics workspace id
-$workspaceId = "xxxxxxxxxxxxxxxxxx"
-#----------------------------------------------------------------
-#----------------------------------------------------------------
-#----------------------------------------------------------------
+$VerboseString = $null
 
 
+# Create the function to create the authorization signature
+Function Build-Signature ($customerId, $sharedKey, $date, $contentLength, $method, $contentType, $resource)
+{
+    $xHeaders = "x-ms-date:" + $date
+    $stringToHash = $method + "`n" + $contentLength + "`n" + $contentType + "`n" + $xHeaders + "`n" + $resource
 
+    $bytesToHash = [Text.Encoding]::UTF8.GetBytes($stringToHash)
+    $keyBytes = [Convert]::FromBase64String($sharedKey)
 
-# Variables
-$VMSKUCache = [System.Collections.ArrayList]@()
-$ThrottleResults = [System.Collections.ArrayList]@()
+    $sha256 = New-Object System.Security.Cryptography.HMACSHA256
+    $sha256.Key = $keyBytes
+    $calculatedHash = $sha256.ComputeHash($bytesToHash)
+    $encodedHash = [Convert]::ToBase64String($calculatedHash)
+    $authorization = 'SharedKey {0}:{1}' -f $customerId,$encodedHash
+    return $authorization
+}
 
+# Create the function to create and post the requestd
+Function Post-VMDiskDataToLogAnalytics($customerId, $sharedKey, $body, $logType)
+{
+    $method = "POST"
+    $contentType = "application/json"
+    $resource = "/api/logs"
+    $rfc1123date = [DateTime]::UtcNow.ToString("r")
+    $contentLength = $body.Length
+    $signature = Build-Signature `
+        -customerId $customerId `
+        -sharedKey $sharedKey `
+        -date $rfc1123date `
+        -contentLength $contentLength `
+        -method $method `
+        -contentType $contentType `
+        -resource $resource
+    $uri = "https://" + $customerId + ".ods.opinsights.azure.com" + $resource + "?api-version=2016-04-01"
 
-
-
-function IsCounterThrottled{
-    param ($VM, $Counter, $Disk, $DiskType)
-
-    $returnThrottleObject = $null
-    $debugString = $null 
-
-    if ($Disk -ne $null) 
-    {
-        if($Counter.CounterName -eq "Disk Transfers/sec" -and [double]$Counter.max -ge $Disk.DiskIOPSReadWrite)
-        {
-            $returnThrottleObject = [PSCustomObject]@{
-                VMName = $VM.Name
-                Counter = $Counter.CounterName
-                CounterValue = $Counter.max
-                CounterSimpleName = "IOPS"
-                CounterInstance = $Counter.InstanceName
-                CounterTimeGenerated = $Counter.TimeGenerated
-                Disk = $Disk.Name
-                ResourceLimit = $Disk.DiskIOPSReadWrite
-                ThrottleType = $DiskType
-
-            }
-            $debugString = "Disk Throttled" + "," + $VM.Name + "," + "Disk Transfer/sec" + "," + $Counter.TimeGenerated + "," + $Disk.Name + "," + $Disk.DiskIOPSReadWrite + "," + $Counter.max | Out-Null
-            Write-Host $debugString
-
-        }
-
-        if($Counter.CounterName -eq "Disk Bytes/sec" -and (([double]$Counter.max)/1024/1024) -ge $Disk.DiskMBpsReadWrite)
-        {
-            $returnThrottleObject = [PSCustomObject]@{
-                VMName = $VM.Name
-                Counter = $Counter.CounterName
-                CounterValue = $Counter.max
-                CounterSimpleName = "Disk MB/sec"
-                CounterInstance = $Counter.InstanceName
-                CounterTimeGenerated = $Counter.TimeGenerated
-                Disk = $Disk.Name
-                ResourceLimit = $Disk.DiskMBpsReadWrite
-                ThrottleType = $DiskType
-                }
-            $debugString = "Disk Throttled" + "," + $VM.Name + "," + "Disk MBytes/sec" + "," + $Counter.TimeGenerated + "," + $Disk.Name + "," + $disk.DiskMBpsReadWrite + "," + ([double]$Counter.max)/1024/1024 | Out-Null
-            Write-Host $debugString
-        }        
-
-    }
-    else
-    {
-        #CounterInstance = _Total
-        if($Counter.CounterName -eq "Disk Transfers/sec" -and [double]$Counter.max -ge $VM.VMIops)
-        {
-
-            $returnThrottleObject = [PSCustomObject]@{
-                VMName = $VM.Name
-                Counter = $Counter.CounterName
-                CounterValue = $Counter.max
-                CounterSimpleName = "IOPS"
-                CounterInstance = $Counter.InstanceName
-                CounterTimeGenerated = $Counter.TimeGenerated
-                Disk = ""
-                ResourceLimit = ""
-                ThrottleType = "VM"
-                }
-
-            $debugString = "VM Throttled" + "," + $VM.Name + "," + "VM - Disk Transfer/sec" + "," + $Counter.TimeGenerated + "," + $Disk.Name + "," + $Disk.DiskIOPSReadWrite + "," + $Counter.max | Out-Null
-            Write-Host $debugString
-        }
-
-        if($Counter.CounterName -eq "Disk Bytes/sec" -and [double]$Counter.max -ge $VM.VMDiskBytes)
-        {
-            $returnThrottleObject = [PSCustomObject]@{
-                VMName = $VM.Name
-                Counter = $Counter.CounterName
-                CounterValue = $Counter.max
-                CounterSimpleName = "Disk MB/sec"
-                CounterInstance = $Counter.InstanceName
-                CounterTimeGenerated = $Counter.TimeGenerated
-                Disk = ""
-                ResourceLimit = ""
-                ThrottleType = "VM"
-                }
-
-            $debugString = "VM Throttled" + "," + $VM.Name + "," + "VM - Disk MBytes/sec" + "," + $Counter.TimeGenerated + "," + $Disk.Name + "," + ([double]$VM.VMDiskBytes)/1024/1024 + "," + ([double]$Counter.max)/1024/1024 | Out-Null
-            Write-Host $debugString
-        }    
+    $headers = @{
+        "Authorization" = $signature;
+        "Log-Type" = $logType;
+        "x-ms-date" = $rfc1123date;
+        "time-generated-field" = $TimeStampField;
     }
 
-    Return $returnThrottleObject
+    $response = Invoke-WebRequest -Uri $uri -Method $method -ContentType $contentType -Headers $headers -Body $body -UseBasicParsing
+    $VerboseString = "Post-VMDiskDataToLogAnalytics response: " + $response
+    Write-Host $VerboseString
+
+    return $response.StatusCode
 
 }
 
-
-
-
-#Exit script if required variables not set.
-if ([string]::IsNullOrEmpty($TenantId) -or [string]::IsNullOrEmpty($ClientId) -or [string]::IsNullOrEmpty($ClientSecret) -or [string]::IsNullOrEmpty($SubscriptionId) -or [string]::IsNullOrEmpty($timeIntervalWindow))
+# Get Azure resources capabilities from REST API
+Function Get-AzureSKUData($TenantId, $SubscriptionId, $ClientId, $ClientSecret)
 {
-    Write-Host "Parameters empty or null. Check script variables at top of script."
-    exit
+    $SKUDefinitions = $null
+    
+    $Resource = "https://management.core.windows.net/"
+    $RequestAccessTokenUri = "https://login.microsoftonline.com/$TenantId/oauth2/token"
+    $body = "grant_type=client_credentials&client_id=$ClientId&client_secret=$ClientSecret&resource=$Resource"
+
+    Write-Host "Authenticating to AZURE REST API - Needed for retrieving Azure SKUs"
+    $Token = Invoke-RestMethod -Method Post -Uri $RequestAccessTokenUri -Body $body -ContentType 'application/x-www-form-urlencoded'
+    Write-Host "Authenticated to AZURE REST API - Needed for retrieving Azure SKUs"
+
+    # Get Azure Microsoft.Compute SKUs
+    $ApiUri = "https://management.azure.com/subscriptions/$SubscriptionId/providers/Microsoft.Compute/skus?api-version=2017-09-01"
+    $Headers = @{}
+    $Headers.Add("Authorization","$($Token.token_type) "+ " " + "$($Token.access_token)")
+
+    Write-Host "Get VM Sizes and IOPS limits from Azure REST API"
+    $SKUDefinitions = Invoke-RestMethod -Method Get -Uri $ApiUri -Headers $Headers
+    Write-Host "Retrieved VM Sizes and IOPS limits from Azure REST API"
+
+    $VerboseString = "Get-AzureSKUData Count: " + $SKUDefinitions.value.Count
+    Write-Host $VerboseString
+
+    return $SKUDefinitions
+
 }
 
-
-
-$Resource = "https://management.core.windows.net/"
-$RequestAccessTokenUri = "https://login.microsoftonline.com/$TenantId/oauth2/token"
-$body = "grant_type=client_credentials&client_id=$ClientId&client_secret=$ClientSecret&resource=$Resource"
-
-Write-Host "### Authenticating to AZURE REST API - Needed for retrieving Azure SKUs"
-$Token = Invoke-RestMethod -Method Post -Uri $RequestAccessTokenUri -Body $body -ContentType 'application/x-www-form-urlencoded'
-Write-Host "###   Authenticated to AZURE REST API - Needed for retrieving Azure SKUs"
-
-# Get Azure Microsoft.Compute SKUs
-$ApiUri = "https://management.azure.com/subscriptions/$SubscriptionId/providers/Microsoft.Compute/skus?api-version=2017-09-01"
-$Headers = @{}
-$Headers.Add("Authorization","$($Token.token_type) "+ " " + "$($Token.access_token)")
-
-Write-Host "### Get VM Sizes and IOPS limits from Azure REST API"
-$SKUDefinitions = Invoke-RestMethod -Method Get -Uri $ApiUri -Headers $Headers
-Write-Host "###   Retrieved VM Sizes and IOPS limits from Azure REST API"
-
-
-
-
-
-
-
-$Query = @'
-Perf | where ObjectName == "PhysicalDisk" and (CounterName == "Disk Transfers/sec" or CounterName == "Disk Bytes/sec" ) 
-'@
-
-if ($targetVM)
+# Get VM and disk configuration
+Function Get-DiskConfigurations($SKUDefinitions, $VMs, $Disks)
 {
-   $Query += " and Computer == `"" + $targetVM + "`""
-}
+    $VMskuCache = [System.Collections.ArrayList]@()
+    $DiskConfigurations = [System.Collections.ArrayList]@()
+    $diskObj = $null
 
-if ($historyWindow)
-{
-    $Query += " and TimeGenerated >= now(" + $historyWindow + ")"
-}
+    $SKUDefinitions = $SKUDefinitions.value | Where { $_.resourceType -eq "virtualMachines" }
 
-$Query += @'
- | summarize ["min"] = min(CounterValue), 
-    ["avg"] = avg(CounterValue), 
-    ["percentile85"] = percentile(CounterValue, 85), 
-    ["max"] = max(CounterValue) 
-        by Computer, _ResourceId, CounterName, InstanceName, bin(TimeGenerated, XX)
-| sort by InstanceName, Computer, _ResourceId, CounterName, TimeGenerated
-'@
-
-$Query = $Query.Replace("XX", $timeIntervalWindow)
-Write-Debug $Query
-
-
-
-
-Write-Host "### Getting data from Log Analytics"
-$Counters = Invoke-AzOperationalInsightsQuery -workspaceId $workspaceId -Query $Query
-$temp = $Counters.Results | measure
-Write-Host "###   Retrieved data from Log Analytics, Counter Records = ", $temp.Count
-
-
-
-Write-Host "### Getting list of VMs"
-if ($targetVM)
-{
-    $VirtualMachines = Get-AzVM -Name $targetVM
-}
-else
-{ 
-    $VirtualMachines = Get-AzVM
-}
-Write-Host "###   Retrieved list of VMs, VM Count = ", $VirtualMachines.Count
-
-
-
-Write-Host "### Getting list of Managed Disks"
-$ManagedDisks = Get-AzDisk
-if ($targetVM)
-{
-    $ManagedDisks = $ManagedDisks | Where {$_.ManagedBy -eq $VirtualMachines[0].Id}
-
-}
-Write-Host "###   Retrieved list of Managed Disks, Managed Disk Count = ", $ManagedDisks.Count
-
-
-
-
-
-Write-Host "### Checking for throttling"
-foreach($counter in $Counters.Results)
-{
-
-
-    $vm = $VirtualMachines | Where-Object Id -EQ $counter._ResourceId
-
-
-    if($counter.InstanceName -eq "_Total")
+    foreach($vm in $VMs)
     {
-        #Compare VM level stats, IOPS\throughput
 
-        $VMsku = $VMSKUCache.Where({ $_.resourceType -eq "virtualMachines" -and $_.locations -eq $vm.Location -and $_.name -eq $vm.HardwareProfile.VmSize} )
-        if ($VMsku[0] -eq $null)
+
+        #TODO - Add limits for VM
+        $VMsku = $VMSKUCache | Where { $_.resourceType -eq "virtualMachines" -and $_.locations -eq $vm.Location -and $_.name -eq $vm.HardwareProfile.VmSize}
+        if ($VMsku -eq $null)
         {
-            
-            $VMsku = $SKUDefinitions.value | Where { $_.resourceType -eq "virtualMachines" -and $_.locations -eq $vm.Location -and $_.name -eq $vm.HardwareProfile.VmSize}
+            $VMsku = $SKUDefinitions | Where { $_.resourceType -eq "virtualMachines" -and $_.locations -eq $vm.Location -and $_.name -eq $vm.HardwareProfile.VmSize}
             $VMSKUCache += $VMsku
         }
-         
 
         $VMIops = $VMsku.capabilities.Where({$_.name -eq "UncachedDiskIOPS" })
         $temp = [int]$VMIOPs[0].value
-        $vm | Add-Member -NotePropertyName VMIops -NotePropertyValue $temp -Force
 
         $VMDiskBytes = $VMsku.capabilities.Where({$_.name -eq "UncachedDiskBytesPerSecond" })
         $temp = [int]$VMDiskBytes[0].value
-        $vm | Add-Member -NotePropertyName VMDiskBytes -NotePropertyValue $temp -Force
-
-        IsCounterThrottled -VM $vm -Counter $counter -Disk $null
 
 
-    }
-    else
-    {
-        #Compare disk level stats, IOPS\throughput
+        $osDisk = $Disks | Where {$_.Id -eq $vm.StorageProfile.OsDisk.ManagedDisk.Id}
 
-        $splitDiskLun = $counter.InstanceName.Split(' ')
-        $diskLun = [int]$splitDiskLun[0]
-        if($diskLun -eq 0)
-        {
-            #OS disk
-            $disk = $ManagedDisks| Where-Object Name -eq $vm[0].StorageProfile.OsDisk.Name
-
-            $object = IsCounterThrottled -VM $vm -Counter $counter -Disk $disk -DiskType "OS Disk"
-            if ($object -ne $null)
-            {
-                $ThrottleResults += $object
-            }
-            
-        }
-        elseif ($diskLun -ge 2)
-        {
-            
-            #Data disks
-            foreach ($dataDisk in $vm[0].StorageProfile.DataDisks)
-            {
-
-                #Lun 0 - OS disk - OS disk always is on Lun 0
-                #Lun 1 - Temp disk
-                #Lun 2 - First data disk  
-                if ($dataDisk.Lun -eq ($diskLun - 2))
-                {
-                    $disk = $ManagedDisks| Where-Object Name -eq $dataDisk.Name
-                    
-                    IsCounterThrottled -VM $vm -Counter $counter -Disk $disk -DiskType "Data Disk"
-
-                    break
+        $diskObj = [PSCustomObject]@{
+                    VMName = $vm.Name.ToLower()
+                    VMResourceId = $vm.Id.ToLower()
+                    VMType = $vm.HardwareProfile.VmSize
+                    VMLocation = $vm.Location
+                    DiskType = "OS"
+                    DiskId = $vm.StorageProfile.OsDisk.ManagedDisk.Id.ToLower()
+                    DiskLun = "0"
+                    DiskIOPSLimit = $osDisk[0].DiskIOPSReadWrite
+                    DiskBytesLimit = (([int]$osDisk[0].DiskMBpsReadWrite) * 1024 * 1024)
+                    VMIOPSLimit = [int]$VMIOPs[0].value
+                    VMBytesLimit = [int]$VMDiskBytes[0].value
                 }
-
-            }
-        }
-        
-    }
-
-
     
+        $DiskConfigurations += $diskObj
+
+        foreach($storageDisk in $vm.StorageProfile.DataDisks)
+        {
+            $dataDisk = $Disks | Where {$_.Id -eq $storageDisk.ManagedDisk.Id}
+
+            $diskObj = [PSCustomObject]@{
+                VMName = $vm.Name.ToLower()
+                VMResourceId = $vm.Id.ToLower()
+                VMType = $vm.HardwareProfile.VmSize
+                VMLocation = $vm.Location
+                DiskType = "Data"
+                DiskId = $storageDisk.ManagedDisk.Id.ToLower()
+                DiskLun = [int]$storageDisk.Lun + 2
+                DiskIOPSLimit = $dataDisk[0].DiskIOPSReadWrite
+                DiskBytesLimit = (([int]$dataDisk[0].DiskMBpsReadWrite) * 1024 * 1024)
+                VMIOPSLimit = [int]$VMIOPs[0].value
+                VMBytesLimit = [int]$VMDiskBytes[0].value
+            }
+
+            $DiskConfigurations += $diskObj
+
+        }
+
+    }
+    
+    $VerboseString = "`$DiskConfigurations Count : " + $DiskConfigurations.Count
+    Write-Host $VerboseString
+
+    return $DiskConfigurations
+
 }
 
-if ($ThrottleResults.Count -eq 0)
+
+# Get VM and Disk data
+$VMs = get-AzVM
+$VerboseString = "VM Count : " + $VMs.Count
+Write-Host $VerboseString
+
+$Disks = Get-AzDisk
+$VerboseString = "Disk Count : " + $Disks.Count
+Write-Host $VerboseString
+
+# Get Azure SKU data
+$SKUDefinitions = Get-AzureSKUData -TenantId $TenantId -SubscriptionId $SubscriptionId -ClientId $ClientId -ClientSecret $ClientSecret
+
+
+# Merge VM and disk data with IOPS and MBytes from Azure capabilities SKU
+$DiskConfigurations = Get-DiskConfigurations -SKUDefinitions $SKUDefinitions -VMs $VMs -Disks $Disks
+$json =  $DiskConfigurations | ConvertTo-Json
+
+
+# Submit the data to the API endpoint
+Post-VMDiskDataToLogAnalytics -customerId $WorkspaceId -sharedKey $sharedKey -body ([System.Text.Encoding]::UTF8.GetBytes($json)) -logType $logType  
+
+# Make sure DiskData was uploaded to Log Analytics
+$CheckForUploadResults = $null
+while($CheckForUploadResults.Count -lt $DiskConfigurations.Count)
 {
-    Write-Host "###No Throttling found in retrieved counters"
+    Start-Sleep -Seconds 10
+    
+    $CheckForUploadQuery = @'
+    DiskThrottleConfig_CL
+    | where TimeGenerated >= todatetime('xxxx')
+'@
+
+    $CheckForUploadQuery = $CheckForUploadQuery.Replace("xxxx", $TimeStampField)
+
+    $CheckForUploadResults = Invoke-AzOperationalInsightsQuery -workspaceId $workspaceId -Query $CheckForUploadQuery
+    $CheckForUploadResults = $CheckForUploadResults.Results | measure
+
+    $VerboseString = "Uploaded " + $DiskConfigurations.Count + " entries, Found " + $CheckForUploadResults.Count + " uploaded results" 
+    Write-Host $VerboseString
+
 }
 
-$timeIntervalWindow = $null
-$historyWindow = $null
-$targetVM = $null
+
+Write-Host "-----------------------------------------"
+Write-Host "Check for throttling events" 
 
 
-Return $ThrottleResults
+# Run Disk and VM throttling queries
+$DiskThrottleQuery = @'
+DiskThrottleConfig_CL
+| where TimeGenerated >= todatetime('xxxx')
+| project VMResourceId_s , DiskId_s , DiskIOPSLimit_d , DiskBytesLimit_d, DiskLun=tostring(toint(DiskLun_d)), DiskType_s, VMIOPSLimit_d , VMBytesLimit_d 
+| join kind= inner (
+    Perf 
+    | where ObjectName == "PhysicalDisk" and (CounterName == "Disk Transfers/sec" or CounterName == "Disk Bytes/sec") 
+    | project TimeGenerated, Computer , _ResourceId , CounterName , InstanceName , CounterValue , Lun=iff(InstanceName == "_Total", "", strcat_array(split(InstanceName, " ", 0), ""))
+) on $left.VMResourceId_s == $right._ResourceId and $left.DiskLun == $right.Lun
+| where (CounterName == "Disk Transfers/sec" and CounterValue >=  DiskIOPSLimit_d) or (CounterName == "Disk Bytes/sec" and CounterValue >=  DiskBytesLimit_d)
+| project TimeGenerated , VMResourceId_s, Computer, DiskId_s, CounterName, CounterValue, DiskIOPSLimit_d, DiskBytesLimit_d , DiskType_s, Lun
+'@
+$DiskThrottleQuery = $DiskThrottleQuery.Replace("xxxx", $TimeStampField)
 
+$DiskThrottleResults = Invoke-AzOperationalInsightsQuery -workspaceId $workspaceId -Query $DiskThrottleQuery
+$VerboseString = $DiskThrottleResults.Results | Measure | Select -Property Count
+Write-Host "Found ", $VerboseString, " disk throttling events"
+
+
+$VMThrottleQuery = @'
+DiskThrottleConfig_CL
+| where TimeGenerated >= todatetime('xxxx')
+| project VMResourceId_s , VMIOPSLimit_d , VMBytesLimit_d 
+| join kind= inner (
+    Perf 
+    | where ObjectName == "PhysicalDisk" and (CounterName == "Disk Transfers/sec" or CounterName == "Disk Bytes/sec") and InstanceName == "_Total" 
+    | project TimeGenerated, Computer , _ResourceId , CounterName , InstanceName , CounterValue
+) on $left.VMResourceId_s == $right._ResourceId
+| where (CounterName == "Disk Transfers/sec" and CounterValue >=  VMIOPSLimit_d) or (CounterName == "Disk Bytes/sec" and CounterValue >=  VMBytesLimit_d)
+| project TimeGenerated , VMResourceId_s, Computer, CounterName, CounterValue, VMIOPSLimit_d, VMBytesLimit_d
+'@
+$VMThrottleQuery = $VMThrottleQuery.Replace("xxxx", $TimeStampField)
+
+$VMThrottleResults = Invoke-AzOperationalInsightsQuery -workspaceId $workspaceId -Query $VMThrottleQuery
+$VerboseString = $VMThrottleResults.Results | Measure | Select -Property Count
+Write-Host "Found ", $VerboseString, " VM throttling events"
+
+
+Write-Host "-----------------------------------------"
+Write-Host "-----------------------------------------"
+Write-Host "-----------------------------------------"
+Write-Host "To export results, run the following " 
+Write-Host "Export-Csv -Path C:\temp\DiskThrottle.csv `$DiskThrottleResults"
+Write-Host "OR"
+Write-Host "Export-Csv -Path C:\temp\VMThrottle.csv `$VMThrottleResults"
