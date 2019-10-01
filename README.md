@@ -46,12 +46,11 @@ PS C:\Temp>
 1. Create Log Analytics workspace and push VM counters to workspace. Please record the workspace Id, and security key. You can find this in the Advanced Settings | Connected Sources pane.
 1. Connect VM to Log Analytics Workspace.
 1. Go to Log Analytics workspace | Advanced Settings | Data | Windows Performance Counters. Add the following counters to be collected at 10s intervals. PhysicalDisk(*)\Disk Bytes/sec, PhysicalDisk(*)\Disk Transfers/sec. It can take 20-30 minutes for counter values to first appear in the workspace.
-1. Create an Azure AD Applicaiton, Assign the application to a role, and then create a client secret. Record the following script. 
+1. Create an Azure AD Applicaiton, Assign the application to a role, and then create a client secret (https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal). Record the following values.
    1. $TenantId
    1. $SubscriptionId 
    1. $ClientId
    1. $ClientSecret
-https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal
 1. Edit the script with the values collected above.
 
 
