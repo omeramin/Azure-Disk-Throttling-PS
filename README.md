@@ -12,22 +12,21 @@ Once the script finishes, you can export the results to CSV, or view in PS.
 
 ```powershell
 
-PS C:\Temp> DiskThrottle.ps1
-
+PS C:\temp> DiskThrottle.ps1
 VM Count : 2
 Disk Count : 5
 Authenticating to AZURE REST API - Needed for retrieving Azure SKUs
 Authenticated to AZURE REST API - Needed for retrieving Azure SKUs
 Get VM Sizes and IOPS limits from Azure REST API
 Retrieved VM Sizes and IOPS limits from Azure REST API
-Get-AzureSKUData Count: 8561
+Get-AzureSKUData Count: 8911
 $DiskConfigurations Count : 5
 Post-VMDiskDataToLogAnalytics response: 
 200
 Uploaded 5 entries, Found 5 uploaded results
 -----------------------------------------
 Check for throttling events
-Found  @{Count=14}  disk throttling events
+Found  @{Count=2}  disk throttling events
 Found  @{Count=0}  VM throttling events
 -----------------------------------------
 -----------------------------------------
@@ -37,7 +36,34 @@ Export-Csv -Path C:\temp\DiskThrottle.csv $DiskThrottleResults
 OR
 Export-Csv -Path C:\temp\VMThrottle.csv $VMThrottleResults
 
-PS C:\Temp> 
+PS C:\Users\omamin.REDMOND> $DiskThrottleResults.Results
+
+
+TimeGenerated    : 2019-10-01T21:54:16.94Z
+VMResourceId_s   : /subscriptions/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/resourcegroups/diskthro
+                   ttle/providers/microsoft.compute/virtualmachines/diskthrottlevm
+Computer         : diskThrottleVM
+DiskId_s         : /subscriptions/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/resourcegroups/diskthro
+                   ttle/providers/microsoft.compute/disks/diskthrottlevm_datadisk_1
+CounterName      : Disk Transfers/sec
+CounterValue     : 243.88948059082
+DiskIOPSLimit_d  : 240
+DiskBytesLimit_d : 52428800
+DiskType_s       : Data
+Lun              : 3
+
+TimeGenerated    : 2019-10-01T21:53:56.933Z
+VMResourceId_s   : /subscriptions/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/resourcegroups/diskthro
+                   ttle/providers/microsoft.compute/virtualmachines/diskthrottlevm
+Computer         : diskThrottleVM
+DiskId_s         : /subscriptions/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/resourcegroups/diskthro
+                   ttle/providers/microsoft.compute/disks/diskthrottlevm_datadisk_1
+CounterName      : Disk Transfers/sec
+CounterValue     : 243.900405883789
+DiskIOPSLimit_d  : 240
+DiskBytesLimit_d : 52428800
+DiskType_s       : Data
+Lun              : 3
 
 ```
 
@@ -45,9 +71,9 @@ PS C:\Temp>
 ## Pre-Reqs
 1. Create Log Analytics workspace and push VM counters to workspace. Please record the workspace Id, and security key. You can find this in the Advanced Settings | Connected Sources pane.
 1. Connect VM to Log Analytics Workspace.
-1. Go to Log Analytics workspace | Advanced Settings | Data | Windows Performance Counters. Add the following counters to be collected at 10s intervals. PhysicalDisk(*)\Disk Bytes/sec, PhysicalDisk(*)\Disk Transfers/sec. It can take 20-30 minutes for counter values to first appear in the workspace.
-1. Create an Azure AD Applicaiton, Assign the application to a role, and then create a client secret (https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal). Record the following values.
-   1. $TenantId
+1. Go to Log Analytics workspace | Advanced Settings | Data | Windows Performance Counters. Add the following counters to be collected at 10s intervals. PhysicalDisk(\*)\Disk Bytes/sec, PhysicalDisk(\*)\Disk Transfers/sec. It can take 20-30 minutes for counter values to first appear in the workspace.
+1. Create an Azure AD Applicaiton, Assign the application to a role, and then create a client secret (https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal). Record the following values. You can get them from the Azure Active Directory pane.
+   1. $TenantId (aka DirectoryId)
    1. $SubscriptionId 
    1. $ClientId
    1. $ClientSecret
