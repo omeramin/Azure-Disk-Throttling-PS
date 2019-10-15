@@ -15,7 +15,7 @@ $LogType = "DiskThrottleConfig"
 
 # Input values to retrieve VM SKUs\capabilities from AZURE REST API 
 # Use Instructions at https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal
-# Create an Azure AD App, assign the app a Reader role, create a new application secret. Then collect the values below.
+# Create an Azure AD App, assign the app a Log Analytics Contributor role, and create a new application secret. Then collect the values below.
 $TenantId = "xxxxxxx"
 $SubscriptionId = "xxxxxxx"
 $ClientId = "xxxxxxx"
